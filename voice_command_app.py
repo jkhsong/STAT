@@ -1,20 +1,9 @@
-# import sys
-# import csv
-# import re
-# from datetime import datetime
-# from speech_recognition import Recognizer, Microphone, WaitTimeoutError, UnknownValueError, RequestError
-# from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QVBoxLayout, QLabel, QScrollArea
-# from PyQt5.QtCore import QThread, pyqtSignal, Qt
-# from PyQt5.QtGui import QPixmap
-# from pynput.keyboard import GlobalHotKeys
-# from fuzzywuzzy import fuzz, process
-# from pygame import mixer
-
+import os
 import sys
 import csv
 import re
 from datetime import datetime
-import speech_recognition as sr
+from speech_recognition import Recognizer, Microphone, WaitTimeoutError, UnknownValueError, RequestError
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QVBoxLayout, QLabel, QScrollArea
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QPixmap
@@ -64,7 +53,8 @@ class MainWindow(QWidget):
         self.voice_thread = None
         self.setup_global_hotkey()
         mixer.init()
-        mixer.music.load("got_it.wav")
+        self.got_it_sound = mixer.Sound("got_it.wav")
+        self.go_ahead_sound = mixer.Sound("go_ahead.wav")
 
     def initUI(self):
         self.setWindowTitle('Voice Command App')
@@ -107,6 +97,7 @@ class MainWindow(QWidget):
     def start_listening(self):
         if not self.voice_thread or not self.voice_thread.isRunning():
             self.status_label.setText('Listening for command...')
+            self.go_ahead_sound.play()
             self.voice_thread = VoiceCommandThread()
             self.voice_thread.command_processed.connect(self.on_command_processed)
             self.voice_thread.start()
@@ -115,20 +106,27 @@ class MainWindow(QWidget):
         self.status_label.setText('Press "Start" or Ctrl+Shift+A to begin')
         self.result_label.setText(message)
         if success:
-            mixer.music.play()
+            self.got_it_sound.play()
         self.voice_thread = None
 
 def load_jadr_references():
     global jadr_dict
     try:
-        with open(JADR_REFERENCE_FILE, 'r') as file:
+        # First, try to load from an external file
+        if os.path.exists(JADR_REFERENCE_FILE):
+            file_path = JADR_REFERENCE_FILE
+        else:
+            # If external file doesn't exist, use the packaged version
+            file_path = os.path.join(sys._MEIPASS, JADR_REFERENCE_FILE)
+        
+        with open(file_path, 'r') as file:
             reader = csv.reader(file)
             for row in reader:
                 if len(row) >= 2:
                     jadr_number = row[0].strip()
                     title = row[1].strip().lower()
                     jadr_dict[jadr_number] = title
-        print(f"Loaded {len(jadr_dict)} JADR references.")
+        print(f"Loaded {len(jadr_dict)} JADR references from {file_path}.")
     except Exception as e:
         print(f"Error loading JADR references: {str(e)}")
 
@@ -176,7 +174,7 @@ def process_voice_command(command):
         hours = float(hours)
         activity = activity.strip()
 
-        # Check for special cases: meeting, Administrative, Support
+        # Check for special cases: Meeting, Administrative, Support
         if activity.lower() in ['meeting', 'administrative', 'support']:
             jadr = ""
             activity_type = activity.capitalize()
