@@ -11,6 +11,15 @@ from pynput.keyboard import GlobalHotKeys
 from fuzzywuzzy import fuzz, process
 from pygame import mixer
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 # File to store the entries
 CSV_FILE = 'time_entries.csv'
 # File containing JADR numbers and titles
@@ -53,8 +62,13 @@ class MainWindow(QWidget):
         self.voice_thread = None
         self.setup_global_hotkey()
         mixer.init()
-        self.got_it_sound = mixer.Sound("got_it.wav")
-        self.go_ahead_sound = mixer.Sound("go_ahead.wav")
+        try:
+            self.got_it_sound = mixer.Sound(resource_path("got_it.wav"))
+            self.go_ahead_sound = mixer.Sound(resource_path("go_ahead.wav"))
+        except Exception as e:
+            print(f"Warning: Sound files not found. Proceeding without audio feedback. Error: {e}")
+            self.got_it_sound = None
+            self.go_ahead_sound = None
 
     def initUI(self):
         self.setWindowTitle('Voice Command App')
@@ -64,10 +78,13 @@ class MainWindow(QWidget):
 
         # Add centered splash image
         splash_label = QLabel(self)
-        pixmap = QPixmap("splash.jpg")
-        splash_label.setPixmap(pixmap)
-        splash_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(splash_label)
+        try:
+            pixmap = QPixmap(resource_path("splash.jpg"))
+            splash_label.setPixmap(pixmap)
+            splash_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(splash_label)
+        except Exception as e:
+            print(f"Warning: Splash image not found. Error: {e}")
 
         self.status_label = QLabel('Press "Start" or Ctrl+Shift+A to begin', self)
         self.status_label.setAlignment(Qt.AlignCenter)
@@ -97,7 +114,8 @@ class MainWindow(QWidget):
     def start_listening(self):
         if not self.voice_thread or not self.voice_thread.isRunning():
             self.status_label.setText('Listening for command...')
-            self.go_ahead_sound.play()
+            if self.go_ahead_sound:
+                self.go_ahead_sound.play()
             self.voice_thread = VoiceCommandThread()
             self.voice_thread.command_processed.connect(self.on_command_processed)
             self.voice_thread.start()
@@ -105,19 +123,20 @@ class MainWindow(QWidget):
     def on_command_processed(self, success, message):
         self.status_label.setText('Press "Start" or Ctrl+Shift+A to begin')
         self.result_label.setText(message)
-        if success:
+        if success and self.got_it_sound:
             self.got_it_sound.play()
         self.voice_thread = None
 
 def load_jadr_references():
     global jadr_dict
     try:
-        # First, try to load from an external file
-        if os.path.exists(JADR_REFERENCE_FILE):
-            file_path = JADR_REFERENCE_FILE
+        # First, try to load from an external file in the same directory as the executable
+        external_path = os.path.join(os.path.dirname(sys.executable), JADR_REFERENCE_FILE)
+        if os.path.exists(external_path):
+            file_path = external_path
         else:
             # If external file doesn't exist, use the packaged version
-            file_path = os.path.join(sys._MEIPASS, JADR_REFERENCE_FILE)
+            file_path = resource_path(JADR_REFERENCE_FILE)
         
         with open(file_path, 'r') as file:
             reader = csv.reader(file)
@@ -153,10 +172,10 @@ def infer_jadr(text):
     text_lower = text.lower()
     best_match = process.extractOne(text_lower, jadr_dict.values(), scorer=fuzz.partial_ratio)
     
-    if best_match and best_match[1] >= 70:  # 70% similarity threshold
+    if best_match and best_match[1] >= 70:  # 70% match similarity threshold
         matched_title = best_match[0]
         for jadr, title in jadr_dict.items():
-            if title == matched_title:
+            if title == matched_title and len(jadr) == 4 and jadr.isdigit():
                 return jadr, matched_title
     
     return None, None
@@ -174,7 +193,7 @@ def process_voice_command(command):
         hours = float(hours)
         activity = activity.strip()
 
-        # Check for special cases: Meeting, Administrative, Support
+        # Check for special cases: meeting, Administrative, Support
         if activity.lower() in ['meeting', 'administrative', 'support']:
             jadr = ""
             activity_type = activity.capitalize()
@@ -191,7 +210,7 @@ def process_voice_command(command):
                     activity_type = " ".join(words[i+1:])
                     break
             else:  # If no JADR is inferred
-                if words[0].isdigit():
+                if words[0].isdigit() and len(words[0]) == 4:
                     jadr = words[0]
                     activity_type = " ".join(words[1:])
                 else:
@@ -205,7 +224,7 @@ def process_voice_command(command):
         return True, result_message
     else:
         message = "Command not recognized. Please use one of the following formats:\n"
-        message += "1. 'Add [hours] hours to [JADR number or keyword] for [activity]'\n"
+        message += "1. 'Add [hours] hours to [4-digit JADR number or keyword] for [activity]'\n"
         message += "2. 'Add [hours] hours to Meeting/Administrative/Support'\n"
         message += f"Received: {command}"
         return False, message
